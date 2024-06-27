@@ -78,7 +78,7 @@ class HDF5Decoder():
                 return True
         return False
 
-    def mat2dict(self, hdf5):
+    def mat2dict(self, hdf5, transpose=True):
 
         if '#refs#' in hdf5:
             self.refs = hdf5['#refs#']
@@ -90,7 +90,7 @@ class HDF5Decoder():
 
             if not self.is_included(hdf5[var]):
                 continue
-            d[var] = self.unpack_mat(hdf5[var])
+            d[var] = self.unpack_mat(hdf5[var], transpose=transpose)
 
         if self.only_include is not None:
             for var, found in self._found_include_var.items():
@@ -103,7 +103,7 @@ class HDF5Decoder():
         return d
 
     # @profile
-    def unpack_mat(self, hdf5, depth=0, MATLAB_class=None, force=False):
+    def unpack_mat(self, hdf5, depth=0, MATLAB_class=None, force=False, transpose=True):
         """
         unpack a h5py entry: if it's a group expand,
         if it's a dataset convert
@@ -152,7 +152,8 @@ class HDF5Decoder():
                     if MATLAB_class is not None:
                         MATLAB_class = MATLAB_class.decode()
                 unpacked = self.unpack_mat(elem, depth=depth+1,
-                                           MATLAB_class=MATLAB_class)
+                                           MATLAB_class=MATLAB_class,
+                                           transpose=transpose)
 
 
                 if MATLAB_class=='struct' and len(elem)>1 and \
@@ -185,7 +186,8 @@ class HDF5Decoder():
             return d
         elif isinstance(hdf5, h5py._hl.dataset.Dataset):
             if self.is_included(hdf5) or force:
-                return self.convert_mat(hdf5, depth, MATLAB_class=MATLAB_class)
+                return self.convert_mat(hdf5, depth, MATLAB_class=MATLAB_class,
+                                       transpose=transpose)
         else:
             raise Exception(f'Unknown hdf5 type: {key}:{type(hdf5)}')
 
@@ -199,7 +201,7 @@ class HDF5Decoder():
         return False
 
     # @profile
-    def convert_mat(self, dataset, depth, MATLAB_class=None):
+    def convert_mat(self, dataset, depth, MATLAB_class=None, transpose=True):
         """
         Converts h5py.dataset into python native datatypes
         according to the matlab class annotation
@@ -238,7 +240,8 @@ class HDF5Decoder():
                 if isinstance(ref, Iterable):
                     for r in ref:
                         # force=True because we want to load cell contents
-                        entry = self.unpack_mat(self.refs.get(r), depth+1, force=True)
+                        entry = self.unpack_mat(self.refs.get(r), depth+1, force=True,
+                                                transpose=transpose)
                         row.append(entry)
                 else:
                     row = [ref]
@@ -267,7 +270,10 @@ class HDF5Decoder():
             return bool(dataset)
 
         elif mtype=='logical':
-            arr = np.array(dataset, dtype=bool).T.squeeze()
+            arr = np.array(dataset, dtype=bool)
+            if transpose:
+                arr = arr.T
+            arr = arr.squeeze()
             if arr.size==1: arr=bool(arr)
             return arr
 
@@ -282,13 +288,17 @@ class HDF5Decoder():
                 dtype = np.complex128
             arr = np.array(dataset)
             arr = (arr['real'] + arr['imag']*1j).astype(dtype)
-            return arr.T.squeeze()
+            if transpose:
+                arr = arr.T
+            return arr.squeeze()
 
         # if it is none of the above, we can convert to numpy array
         elif mtype in ('double', 'single', 'int8', 'int16', 'int32', 'int64',
                        'uint8', 'uint16', 'uint32', 'uint64'):
             arr = np.array(dataset, dtype=dataset.dtype)
-            return arr.T.squeeze()
+            if transpose:
+                arr = arr.T
+            return arr.squeeze()
         elif mtype=='missing':
             arr = None
         else:
@@ -299,7 +309,7 @@ class HDF5Decoder():
             return None
 
 
-def loadmat(file, use_attrdict=False, only_include=None, verbose=True):
+def loadmat(file, use_attrdict=False, only_include=None, verbose=True, transpose=True):
     """
     Loads a MATLAB 7.3 .mat file, which is actually a
     HDF5 file with some custom matlab annotations inside
@@ -329,7 +339,7 @@ def loadmat(file, use_attrdict=False, only_include=None, verbose=True):
 
     try:
         with h5py.File(file, 'r') as hdf5:
-            dictionary = decoder.mat2dict(hdf5)
+            dictionary = decoder.mat2dict(hdf5, transpose=transpose)
         return dictionary
     except FileNotFoundError:
         raise
